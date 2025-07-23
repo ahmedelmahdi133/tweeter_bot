@@ -56,6 +56,7 @@ console.log('REDIRECT_URI:', redirectUri);
 const keywords = ['مطلوب معلمين']; // عدل الكلمات كما تريد
 const TOKEN_PATH = './token.json';
 const LAST_ID_PATH = './last_id.txt';
+const TOKEN_ENV_KEY = 'TWITTER_TOKEN_DATA';
 
 // إضافة route للـ callback
 app.get('/callback', (req, res) => {
@@ -130,11 +131,11 @@ app.post('/auth', async (req, res) => {
       scope,
       tokenType
     };
-    
-    fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokenData, null, 2));
-    console.log('تم حفظ التوكن بنجاح من Railway!');
-    
-    res.json({ success: true, message: 'تم حفظ التوكن بنجاح' });
+    // حفظ التوكن في متغير بيئة (اطبع القيمة ليتم نسخها يدوياً)
+    console.log('--- انسخ القيمة التالية وضعها في متغير بيئة TWITTER_TOKEN_DATA في Railway ---');
+    console.log(JSON.stringify(tokenData));
+    console.log('--- انتهى ---');
+    res.json({ success: true, message: 'تم حفظ التوكن بنجاح. انسخ القيمة من الـ logs وضعها في متغير البيئة.' });
   } catch (err) {
     console.error('فشل في معالجة التفويض:', err);
     res.status(500).json({ error: err.message });
@@ -184,23 +185,30 @@ app.get('/auth-url', (req, res) => {
 
 async function getUserClient() {
   console.log('🔐 Initializing Twitter client...');
-  
   let token;
-  if (fs.existsSync(TOKEN_PATH)) {
+  // جلب التوكن من متغير البيئة إذا كان موجوداً
+  if (process.env[TOKEN_ENV_KEY]) {
+    try {
+      token = JSON.parse(process.env[TOKEN_ENV_KEY]);
+      console.log('✅ Found token in environment variable');
+    } catch (error) {
+      console.error('❌ Error parsing token from environment variable:', error);
+      token = null;
+    }
+  } else if (fs.existsSync(TOKEN_PATH)) {
+    // دعم قديم: جلب التوكن من الملف إذا كان موجوداً (للتوافق فقط)
     try {
       token = JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf8'));
-      console.log('✅ Found existing token');
+      console.log('✅ Found existing token file');
     } catch (error) {
       console.error('❌ Error reading token file:', error);
       token = null;
     }
   }
-
   const twitterClient = new TwitterApi({
     clientId,
     clientSecret,
   });
-
   if (!token) {
     console.log('🔑 No token found, generating OAuth URL...');
     // لا يوجد توكن، اطبع رابط التفويض فقط
@@ -280,7 +288,6 @@ async function getUserClient() {
     }
   } else {
     console.log('🔄 Refreshing existing token...');
-    // استخدم refreshOAuth2Token لتحديث التوكن
     try {
       const { client: userClient, accessToken, refreshToken, expiresIn, scope, tokenType } = await twitterClient.refreshOAuth2Token(token.refreshToken);
       const tokenData = {
@@ -290,12 +297,14 @@ async function getUserClient() {
         scope,
         tokenType
       };
-      fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokenData, null, 2));
+      // إذا كنت تعمل على Railway أو production، لا تحفظ في ملف، فقط استخدم المتغير
+      if (!process.env[TOKEN_ENV_KEY]) {
+        fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokenData, null, 2));
+      }
       console.log('✅ Token refreshed successfully');
       return userClient;
     } catch (err) {
       console.error('❌ Failed to refresh token:', err);
-      // احذف التوكن القديم وابدأ التفويض من جديد
       if (fs.existsSync(TOKEN_PATH)) {
         fs.unlinkSync(TOKEN_PATH);
       }
