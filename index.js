@@ -1,11 +1,27 @@
 require('dotenv').config();
+
+// معالجة الأخطاء غير المعالجة
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  process.exit(1);
+});
+
 const { TwitterApi, ETwitterApiError } = require('twitter-api-v2');
 const fs = require('fs');
 const readline = require('readline');
 const express = require('express');
 
+console.log('🚀 Starting Twitter Bot...');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+console.log('📋 Loading environment variables...');
 
 const clientId = process.env.CLIENT_ID;
 const clientSecret = process.env.CLIENT_SECRET;
@@ -155,9 +171,17 @@ app.get('/auth-url', (req, res) => {
 });
 
 async function getUserClient() {
+  console.log('🔐 Initializing Twitter client...');
+  
   let token;
   if (fs.existsSync(TOKEN_PATH)) {
-    token = JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf8'));
+    try {
+      token = JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf8'));
+      console.log('✅ Found existing token');
+    } catch (error) {
+      console.error('❌ Error reading token file:', error);
+      token = null;
+    }
   }
 
   const twitterClient = new TwitterApi({
@@ -166,70 +190,84 @@ async function getUserClient() {
   });
 
   if (!token) {
+    console.log('🔑 No token found, generating OAuth URL...');
     // لا يوجد توكن، اطبع رابط التفويض فقط
-    const { url, codeVerifier, state } = twitterClient.generateOAuth2AuthLink(
-      redirectUri,
-      { scope: [
-        'tweet.read',
-        'tweet.write',
-        'users.read',
-        'offline.access',
-      ] }
-    );
-    fs.writeFileSync('./oauth_state.json', JSON.stringify({ codeVerifier, state }));
-    console.log('افتح هذا الرابط في المتصفح وسجل الدخول ثم انسخ الرابط النهائي بعد التفويض:');
-    console.log(url);
-    // استخدم Promise مع readline
-    await new Promise((resolve, reject) => {
-      const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout
-      });
-      rl.question('بعد التفويض، الصق الرابط النهائي هنا:\n', async (redirectedUrl) => {
-        rl.close();
-        try {
-          const urlObj = new URL(redirectedUrl.trim());
-          const code = urlObj.searchParams.get('code');
-          const stateFromUrl = urlObj.searchParams.get('state');
-          
-          // تحقق من وجود ملف oauth_state.json
-          if (!fs.existsSync('./oauth_state.json')) {
-            console.error('ملف oauth_state.json غير موجود');
+    try {
+      const { url, codeVerifier, state } = twitterClient.generateOAuth2AuthLink(
+        redirectUri,
+        { scope: [
+          'tweet.read',
+          'tweet.write',
+          'users.read',
+          'offline.access',
+        ] }
+      );
+      fs.writeFileSync('./oauth_state.json', JSON.stringify({ codeVerifier, state }));
+      console.log('✅ OAuth URL generated successfully');
+      console.log('🌐 OAuth URL:', url);
+      
+      // في بيئة Railway، لا نحتاج readline
+      if (process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT) {
+        console.log('🚀 Running in production environment, skipping readline');
+        return null; // سنتعامل مع التفويض عبر الويب
+      }
+      
+      // استخدم Promise مع readline (للتطوير المحلي فقط)
+      await new Promise((resolve, reject) => {
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout
+        });
+        rl.question('بعد التفويض، الصق الرابط النهائي هنا:\n', async (redirectedUrl) => {
+          rl.close();
+          try {
+            const urlObj = new URL(redirectedUrl.trim());
+            const code = urlObj.searchParams.get('code');
+            const stateFromUrl = urlObj.searchParams.get('state');
+            
+            // تحقق من وجود ملف oauth_state.json
+            if (!fs.existsSync('./oauth_state.json')) {
+              console.error('ملف oauth_state.json غير موجود');
+              process.exit(1);
+            }
+            
+            const { codeVerifier, state } = JSON.parse(fs.readFileSync('./oauth_state.json', 'utf8'));
+            if (state !== stateFromUrl) {
+              console.error('State mismatch. Please try again.');
+              process.exit(1);
+            }
+            const { client: userClient, accessToken, refreshToken, expiresIn, scope, tokenType } = await twitterClient.loginWithOAuth2({
+              code,
+              codeVerifier,
+              redirectUri,
+            });
+            const tokenData = {
+              accessToken,
+              refreshToken,
+              expiresIn,
+              scope,
+              tokenType
+            };
+            fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokenData, null, 2));
+            console.log('تم حفظ التوكن بنجاح. البيانات المحفوظة:');
+            console.log({ expiresIn, scope, tokenType });
+            console.log('أعد تشغيل البوت.');
+            resolve();
+            process.exit(0);
+          } catch (err) {
+            console.error('فشل في معالجة رابط التفويض:', err);
+            reject(err);
             process.exit(1);
           }
-          
-          const { codeVerifier, state } = JSON.parse(fs.readFileSync('./oauth_state.json', 'utf8'));
-          if (state !== stateFromUrl) {
-            console.error('State mismatch. Please try again.');
-            process.exit(1);
-          }
-          const { client: userClient, accessToken, refreshToken, expiresIn, scope, tokenType } = await twitterClient.loginWithOAuth2({
-            code,
-            codeVerifier,
-            redirectUri,
-          });
-          const tokenData = {
-            accessToken,
-            refreshToken,
-            expiresIn,
-            scope,
-            tokenType
-          };
-          fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokenData, null, 2));
-          console.log('تم حفظ التوكن بنجاح. البيانات المحفوظة:');
-          console.log({ expiresIn, scope, tokenType });
-          console.log('أعد تشغيل البوت.');
-          resolve();
-          process.exit(0);
-        } catch (err) {
-          console.error('فشل في معالجة رابط التفويض:', err);
-          reject(err);
-          process.exit(1);
-        }
+        });
       });
-    });
-    return;
+      return;
+    } catch (error) {
+      console.error('❌ Error generating OAuth URL:', error);
+      throw error;
+    }
   } else {
+    console.log('🔄 Refreshing existing token...');
     // استخدم refreshOAuth2Token لتحديث التوكن
     try {
       const { client: userClient, accessToken, refreshToken, expiresIn, scope, tokenType } = await twitterClient.refreshOAuth2Token(token.refreshToken);
@@ -241,10 +279,10 @@ async function getUserClient() {
         tokenType
       };
       fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokenData, null, 2));
-      console.log('تم تحديث التوكن بنجاح.');
+      console.log('✅ Token refreshed successfully');
       return userClient;
     } catch (err) {
-      console.error('فشل في تحديث التوكن:', err);
+      console.error('❌ Failed to refresh token:', err);
       // احذف التوكن القديم وابدأ التفويض من جديد
       if (fs.existsSync(TOKEN_PATH)) {
         fs.unlinkSync(TOKEN_PATH);
@@ -252,8 +290,8 @@ async function getUserClient() {
       if (fs.existsSync('./oauth_state.json')) {
         fs.unlinkSync('./oauth_state.json');
       }
-      console.log('سيتم إعادة التفويض. أعد تشغيل البوت.');
-      process.exit(1);
+      console.log('🔄 Will restart authentication process');
+      return null;
     }
   }
 }
@@ -305,17 +343,38 @@ async function searchAndReply(userClient, sinceId) {
 }
 
 async function startPolling() {
-  const userClient = await getUserClient();
-  if (!userClient) return;
-  let sinceId = fs.existsSync(LAST_ID_PATH) ? fs.readFileSync(LAST_ID_PATH, 'utf8') : undefined;
-  setInterval(async () => {
-    const newSinceId = await searchAndReply(userClient, sinceId);
-    if (newSinceId && newSinceId !== sinceId) {
-      sinceId = newSinceId;
-      fs.writeFileSync(LAST_ID_PATH, sinceId);
+  console.log('🤖 Starting polling process...');
+  
+  try {
+    const userClient = await getUserClient();
+    
+    if (!userClient) {
+      console.log('⚠️ No user client available, waiting for web authentication...');
+      console.log('🌐 Please visit the web interface to authenticate');
+      return; // لا نبدأ البولينج حتى يتم التفويض
     }
-  }, 16 * 60 * 1000); // كل 1 دقيقة
-  console.log('bot is searching for keywords every 5 minutes');
+    
+    console.log('✅ User client initialized successfully');
+    
+    let sinceId = fs.existsSync(LAST_ID_PATH) ? fs.readFileSync(LAST_ID_PATH, 'utf8') : undefined;
+    
+    setInterval(async () => {
+      try {
+        const newSinceId = await searchAndReply(userClient, sinceId);
+        if (newSinceId && newSinceId !== sinceId) {
+          sinceId = newSinceId;
+          fs.writeFileSync(LAST_ID_PATH, sinceId);
+        }
+      } catch (error) {
+        console.error('❌ Error in polling interval:', error);
+      }
+    }, 16 * 60 * 1000); // كل 16 دقيقة
+    
+    console.log('✅ Polling started successfully');
+    console.log('⏰ Will search for keywords every 16 minutes');
+  } catch (error) {
+    console.error('❌ Error in startPolling:', error);
+  }
 }
 
 // تشغيل السيرفر مع معالجة الأخطاء
