@@ -23,9 +23,21 @@ const PORT = process.env.PORT || 3000;
 
 console.log('📋 Loading environment variables...');
 
+// طباعة جميع متغيرات البيئة للتشخيص
+console.log('🔍 All environment variables:');
+console.log('process.env keys:', Object.keys(process.env));
+console.log('NODE_ENV:', process.env.NODE_ENV);
+console.log('RAILWAY_ENVIRONMENT:', process.env.RAILWAY_ENVIRONMENT);
+console.log('PORT:', process.env.PORT);
+
 const clientId = process.env.CLIENT_ID;
 const clientSecret = process.env.CLIENT_SECRET;
 const redirectUri = process.env.REDIRECT_URI;
+
+console.log('🔍 Specific variables:');
+console.log('CLIENT_ID length:', clientId ? clientId.length : 'undefined');
+console.log('CLIENT_SECRET length:', clientSecret ? clientSecret.length : 'undefined');
+console.log('REDIRECT_URI:', redirectUri);
 
 // فحص متغيرات البيئة
 if (!clientId || !clientSecret || !redirectUri) {
