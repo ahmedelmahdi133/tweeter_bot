@@ -10,32 +10,59 @@ const PORT = process.env.PORT || 3000;
 const clientId = process.env.CLIENT_ID;
 const clientSecret = process.env.CLIENT_SECRET;
 const redirectUri = process.env.REDIRECT_URI;
+
+// فحص متغيرات البيئة
+if (!clientId || !clientSecret || !redirectUri) {
+  console.error('❌ متغيرات البيئة مفقودة!');
+  console.error('CLIENT_ID:', clientId ? '✅ موجود' : '❌ مفقود');
+  console.error('CLIENT_SECRET:', clientSecret ? '✅ موجود' : '❌ مفقود');
+  console.error('REDIRECT_URI:', redirectUri ? '✅ موجود' : '❌ مفقود');
+  console.error('تأكد من إضافة متغيرات البيئة في Railway Variables tab');
+  process.exit(1);
+}
+
+console.log('✅ متغيرات البيئة موجودة بنجاح');
+console.log('CLIENT_ID:', clientId);
+console.log('REDIRECT_URI:', redirectUri);
+
 const keywords = ['مطلوب معلمين']; // عدل الكلمات كما تريد
 const TOKEN_PATH = './token.json';
 const LAST_ID_PATH = './last_id.txt';
 
 // إضافة route للـ callback
 app.get('/callback', (req, res) => {
-  const { code, state } = req.query;
-  if (code && state) {
-    res.send(`
-      <html>
-        <body>
-          <h2>تم استلام الكود بنجاح!</h2>
-          <p>يمكنك الآن إغلاق هذه الصفحة.</p>
-          <script>
-            // إرسال الكود إلى البوت
-            fetch('/auth', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ code, state })
-            });
-          </script>
-        </body>
-      </html>
-    `);
-  } else {
-    res.status(400).send('خطأ في البيانات المستلمة');
+  try {
+    const { code, state } = req.query;
+    if (code && state) {
+      res.send(`
+        <html>
+          <body>
+            <h2>تم استلام الكود بنجاح!</h2>
+            <p>يمكنك الآن إغلاق هذه الصفحة.</p>
+            <script>
+              // إرسال الكود إلى البوت
+              fetch('/auth', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ code, state })
+              }).then(response => response.json())
+              .then(data => {
+                if (data.success) {
+                  document.body.innerHTML += '<p style="color: green;">تم حفظ التوكن بنجاح!</p>';
+                } else {
+                  document.body.innerHTML += '<p style="color: red;">فشل في حفظ التوكن</p>';
+                }
+              });
+            </script>
+          </body>
+        </html>
+      `);
+    } else {
+      res.status(400).send('خطأ في البيانات المستلمة');
+    }
+  } catch (error) {
+    console.error('خطأ في callback:', error);
+    res.status(500).send('خطأ في الخادم');
   }
 });
 
@@ -43,12 +70,22 @@ app.use(express.json());
 
 // route لاستقبال بيانات التفويض
 app.post('/auth', async (req, res) => {
-  const { code, state } = req.body;
   try {
+    const { code, state } = req.body;
+    
+    if (!code || !state) {
+      return res.status(400).json({ error: 'الكود والحالة مطلوبان' });
+    }
+    
     const twitterClient = new TwitterApi({
       clientId,
       clientSecret,
     });
+    
+    // تحقق من وجود ملف oauth_state.json
+    if (!fs.existsSync('./oauth_state.json')) {
+      return res.status(500).json({ error: 'ملف oauth_state.json غير موجود' });
+    }
     
     const { codeVerifier } = JSON.parse(fs.readFileSync('./oauth_state.json', 'utf8'));
     
@@ -154,6 +191,13 @@ async function getUserClient() {
           const urlObj = new URL(redirectedUrl.trim());
           const code = urlObj.searchParams.get('code');
           const stateFromUrl = urlObj.searchParams.get('state');
+          
+          // تحقق من وجود ملف oauth_state.json
+          if (!fs.existsSync('./oauth_state.json')) {
+            console.error('ملف oauth_state.json غير موجود');
+            process.exit(1);
+          }
+          
           const { codeVerifier, state } = JSON.parse(fs.readFileSync('./oauth_state.json', 'utf8'));
           if (state !== stateFromUrl) {
             console.error('State mismatch. Please try again.');
@@ -202,8 +246,12 @@ async function getUserClient() {
     } catch (err) {
       console.error('فشل في تحديث التوكن:', err);
       // احذف التوكن القديم وابدأ التفويض من جديد
-      fs.unlinkSync(TOKEN_PATH);
-      fs.unlinkSync('./oauth_state.json');
+      if (fs.existsSync(TOKEN_PATH)) {
+        fs.unlinkSync(TOKEN_PATH);
+      }
+      if (fs.existsSync('./oauth_state.json')) {
+        fs.unlinkSync('./oauth_state.json');
+      }
       console.log('سيتم إعادة التفويض. أعد تشغيل البوت.');
       process.exit(1);
     }
