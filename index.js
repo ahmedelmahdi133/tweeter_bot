@@ -318,9 +318,22 @@ async function startPolling() {
   console.log('bot is searching for keywords every 5 minutes');
 }
 
-// تشغيل السيرفر
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+// تشغيل السيرفر مع معالجة الأخطاء
+try {
+  app.listen(PORT, () => {
+    console.log(`✅ Server running on port ${PORT}`);
+    console.log(`🌐 Application URL: https://web-production-1b47e.up.railway.app`);
+  });
+} catch (error) {
+  console.error('❌ Error starting server:', error);
+  process.exit(1);
+}
 
-startPolling().catch(console.error); 
+// تشغيل البوت مع معالجة الأخطاء
+try {
+  startPolling().catch(error => {
+    console.error('❌ Error in startPolling:', error);
+  });
+} catch (error) {
+  console.error('❌ Error starting polling:', error);
+} 
